@@ -1,6 +1,7 @@
 package com.saurabh.service;
 
 import com.opencsv.CSVWriter;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -14,8 +15,8 @@ import java.io.InputStream;
 import java.util.*;
 
 @Service
+@Slf4j
 public class ExcelToCsvService {
-
     public String convertExcelToCSV(MultipartFile file, String saveDirectory) {
         if (!file.isEmpty()) {
             try (InputStream is = file.getInputStream()) {
@@ -27,62 +28,78 @@ public class ExcelToCsvService {
                 } else {
                     throw new IllegalArgumentException("Unsupported Excel file format.");
                 }
+
+                // Assuming there is only one sheet
+                Sheet sheet = workbook.getSheetAt(0);
+
                 List<Map<String, String>> jsonData = new ArrayList<>();
-                for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-                    Sheet sheet = workbook.getSheetAt(i);
-                    Iterator<Row> rowIterator = sheet.iterator();
-                    List<String> headers = new ArrayList<>();
-                    boolean isFirstRow = true;
-                    while (rowIterator.hasNext()) {
-                        Row row = rowIterator.next();
-                        Iterator<Cell> cellIterator = row.cellIterator();
-                        Map<String, String> rowMap = new LinkedHashMap<>();
-                        while (cellIterator.hasNext()) {
-                            Cell cell = cellIterator.next();
-                            String cellValue;
+                List<String> headers = new ArrayList<>();
+                boolean isFirstRow = true;
 
-                            if (isFirstRow) {
-                                headers.add(cell.getStringCellValue());
-                            } else {
-                                switch (cell.getCellType()) {
-                                    case STRING:
-                                        cellValue = cell.getStringCellValue();
-                                        break;
-                                    case NUMERIC:
-                                        cellValue = String.valueOf(cell.getNumericCellValue());
-                                        break;
-                                    case BOOLEAN:
-                                        cellValue = String.valueOf(cell.getBooleanCellValue());
-                                        break;
-                                    case BLANK:
-                                        cellValue = "";
-                                        break;
-                                    default:
-                                        cellValue = "";
-                                        break;
-                                }
+                for (Row row : sheet) {
+                    Iterator<Cell> cellIterator = row.cellIterator();
+                    Map<String, String> rowMap = new LinkedHashMap<>();
+                    boolean isRowValid = false; // Initialize as false
 
-                                String header = headers.get(cell.getColumnIndex());
-                                rowMap.put(header, cellValue);
+                    while (cellIterator.hasNext()) {
+                        Cell cell = cellIterator.next();
+                        String cellValue;
+
+                        if (isFirstRow) {
+                            headers.add(sanitizeCellValue(cell.getStringCellValue()));
+                        } else {
+                            switch (cell.getCellType()) {
+                                case STRING:
+                                    cellValue = sanitizeCellValue(cell.getStringCellValue());
+                                    break;
+                                case NUMERIC:
+                                    cellValue = String.valueOf(cell.getNumericCellValue());
+                                    break;
+                                case BOOLEAN:
+                                    cellValue = String.valueOf(cell.getBooleanCellValue());
+                                    break;
+                                case BLANK:
+                                    cellValue = "";
+                                    break;
+                                default:
+                                    cellValue = "";
                             }
-                        }
+                            if (!cellValue.isEmpty()) {
+                                isRowValid = true; // At least one cell has data
+                            }
 
-                        if (!isFirstRow) {
-                            jsonData.add(rowMap);
+                            String header = headers.get(cell.getColumnIndex());
+                            rowMap.put(header, cellValue);
                         }
-                        isFirstRow = false;
                     }
-                    String csvFileName = "ConvertedExcelToCsv.csv"; // You may want to change the CSV file name here.
-                    String csvFilePath = saveDirectory + File.separator + csvFileName;
-                    saveCSVFile(csvFilePath, headers, jsonData);
+
+                    if (!isFirstRow && isRowValid) {
+                        log.info("->>>"+rowMap);
+                        jsonData.add(rowMap);
+                    }
+                    isFirstRow = false;
                 }
+
+                // Sanitize the headers before saving
+                List<String> sanitizedHeaders = List.of(sanitizeHeader(headers.toArray(new String[0])));
+
+                // Create a unique CSV file for each sheet based on the sheet name
+                String sheetName = sheet.getSheetName();
+                String csvFileName = sanitizeSheetName(sheetName) + ".csv";
+                String csvFilePath = saveDirectory + File.separator + csvFileName;
+
+                // Only save the data if there's valid data to save
+                if (!jsonData.isEmpty()) {
+                    saveCSVFile(csvFilePath, sanitizedHeaders, jsonData);
+                }
+
                 return "EXCEL FILE SUCCESSFULLY CONVERTED INTO CSV";
             } catch (IOException e) {
                 e.printStackTrace();
-                return "Error converting Excel to CSV and saving: " + e.getMessage();
+                return "ERROR CONVERTING EXCEL TO CSV AND SAVING: " + e.getMessage();
             }
         } else {
-            return "Please provide an Excel file.";
+            return "PLEASE PROVIDE AN EXCEL SHEET";
         }
     }
 
@@ -93,7 +110,7 @@ public class ExcelToCsvService {
 
             if (!parentDir.exists()) {
                 if (parentDir.mkdirs()) {
-                    System.out.println("Directory created: " + parentDir.getAbsolutePath());
+                    log.info("Directory created: " + parentDir.getAbsolutePath());
                 } else {
                     throw new IOException("Failed to create directory: " + parentDir.getAbsolutePath());
                 }
@@ -114,5 +131,27 @@ public class ExcelToCsvService {
             e.printStackTrace();
             throw new RuntimeException("Error saving CSV file: " + e.getMessage());
         }
+    }
+
+    private String sanitizeCellValue(String cellValue) {
+        cellValue = cellValue.replaceAll("[\\p{Cntrl}\\p{Cc}\\p{Cf}\\p{Co}\\p{Cn}]", "");
+        boolean cellValueFlag = containsHiddenCharacters(cellValue);
+        log.info("---------------->" + cellValueFlag);
+        return cellValue;
+    }
+
+    private String[] sanitizeHeader(String[] headers) {
+        for (int i = 0; i < headers.length; i++) {
+            headers[i] = headers[i].replaceAll("[^\\p{Print}]", "");
+        }
+        return headers;
+    }
+
+    private boolean containsHiddenCharacters(String value) {
+        return value.matches(".*[\\p{Cntrl}\\p{Cc}\\p{Cf}\\p{Co}\\p{Cn}].*");
+    }
+
+    private String sanitizeSheetName(String sheetName) {
+        return sheetName.replaceAll("[^a-zA-Z0-9_-]", "_");
     }
 }
