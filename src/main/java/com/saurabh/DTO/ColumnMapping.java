@@ -1,17 +1,13 @@
 package com.saurabh.DTO;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
+
 @Data
 @Getter
 @Setter
 @AllArgsConstructor
+@NoArgsConstructor
 public class ColumnMapping {
     private String inputColumnName;
     private String outputColumnName;
-    private String inputDataType; 
-    private String outputType;
-
 }

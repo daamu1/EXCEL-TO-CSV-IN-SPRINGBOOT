@@ -1,5 +1,6 @@
 package com.saurabh.service;
 
+import com.saurabh.DTO.ColumnMapping;
 import com.saurabh.DTO.ColumnMappingRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
@@ -30,18 +31,21 @@ public class ExcelToCsvService {
                 } else {
                     throw new IllegalArgumentException("Unsupported Excel file format.");
                 }
-
-                // Assuming there is only one sheet
                 Sheet sheet = workbook.getSheetAt(0);
-                Map<String, String> columnMapping = new FileUtilOperation().getColumnMapping(columnMappingRequest);
+                Map<String, String> columnMapping = new HashMap<>();
+                for (ColumnMapping mapping : columnMappingRequest.getColumnMapping()) {
+                    columnMapping.put(mapping.getInputColumnName(), mapping.getOutputColumnName());
+                }
+
                 List<Map<String, String>> jsonData = new ArrayList<>();
                 List<String> headers = new ArrayList<>();
+                List<String> desiredHeaders = new ArrayList<>();
                 boolean isFirstRow = true;
 
                 for (Row row : sheet) {
                     Iterator<Cell> cellIterator = row.cellIterator();
                     Map<String, String> rowMap = new LinkedHashMap<>();
-                    boolean isRowValid = false; // Initialize as false
+                    boolean isRowValid = false;
 
                     while (cellIterator.hasNext()) {
                         Cell cell = cellIterator.next();
@@ -50,6 +54,8 @@ public class ExcelToCsvService {
                         if (isFirstRow) {
                             headers.add(new SanitizationFileContant().sanitizeCellValue(cell.getStringCellValue()));
                         } else {
+                            String header = headers.get(cell.getColumnIndex());
+
                             switch (cell.getCellType()) {
                                 case STRING:
                                     cellValue = new SanitizationFileContant().sanitizeCellValue(cell.getStringCellValue());
@@ -67,26 +73,22 @@ public class ExcelToCsvService {
                                     cellValue = "";
                             }
                             if (!cellValue.isEmpty()) {
-                                isRowValid = true; // At least one cell has data
+                                isRowValid = true;
                             }
-
-                            String header = headers.get(cell.getColumnIndex());
                             if (columnMapping.containsKey(header)) {
-//                                String newHeader = columnMapping.get(header);
-                                rowMap.put(header, cellValue);
+                                String outputHeader = columnMapping.get(header);
+                                desiredHeaders.add(outputHeader);
+                                rowMap.put(outputHeader, cellValue);
                             }
                         }
                     }
-
                     if (!isFirstRow && isRowValid) {
                         log.info("->>>" + rowMap);
                         jsonData.add(rowMap);
                     }
                     isFirstRow = false;
                 }
-
-                // Sanitize the headers before saving
-                List<String> sanitizedHeaders = List.of(new SanitizationFileContant().sanitizeHeader(headers.toArray(new String[0])));
+                List<String> sanitizedHeaders = List.of(new SanitizationFileContant().sanitizeHeader(desiredHeaders.toArray(new String[0])));
 
                 // Create a unique CSV file for each sheet based on the sheet name
                 String sheetName = sheet.getSheetName();
@@ -97,7 +99,6 @@ public class ExcelToCsvService {
                 if (!jsonData.isEmpty()) {
                     new FileUtilOperation().saveCSVFile(csvFilePath, sanitizedHeaders, jsonData);
                 }
-
                 return "EXCEL FILE SUCCESSFULLY CONVERTED INTO CSV";
             } catch (IOException e) {
                 e.printStackTrace();
